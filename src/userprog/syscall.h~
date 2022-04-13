@@ -1,0 +1,48 @@
+#ifndef USERPROG_SYSCALL_H
+#define USERPROG_SYSCALL_H
+
+/* ++++ Project2.2 System Call ++++ */
+
+typedef int pid_t;
+#define bool    _Bool
+
+struct lock filesys_lock;
+
+void syscall_init (void);
+
+void check_address(void *addr);
+
+void get_argument(void *esp, int *arg, int count);
+
+
+/* ++++ Project2.2 system call  ++++ */
+//static void
+//syscall_handler (struct intr_frame *f UNUSED);
+
+//void
+
+void halt(void);
+void exit(int status);
+pid_t exec(const char *cmd_line);
+bool create (const char *file, unsigned initial_size);
+bool remove (const char *file);
+
+int wait(pid_t);
+
+int open (const char *file);
+void close (int fd);
+
+int filesize (int fd);
+
+int read (int fd, void *buffer, unsigned length);
+int write (int fd, const void *buffer, unsigned length);
+
+void seek (int fd, unsigned position);
+unsigned tell (int fd);
+
+
+/* +++++++++++++++++++++++++++++++++ */
+
+
+
+#endif /* userprog/syscall.h */

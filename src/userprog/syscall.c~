@@ -1,0 +1,382 @@
+#include "userprog/syscall.h"
+#include <stdio.h>
+#include <syscall-nr.h>
+#include "threads/interrupt.h"
+#include "threads/thread.h"
+#include "threads/vaddr.h"
+#include "filesys/filesys.h"     // filesys_OOO()
+#include "devices/shutdown.h" // shutdown_power_off()
+#include "userprog/process.h"
+#include "threads/synch.h"
+#include "filesys/off_t.h"
+#include "filesys/file.h"
+#include "lib/string.h"
+#include "devices/input.h"
+
+/*
+  struct thread *holder; //thread holding lock
+  struct sempahore semaphore;//binary semaphore
+*/
+
+static void syscall_handler (struct intr_frame *);
+
+void
+syscall_init (void) 
+{
+  lock_init(&filesys_lock);
+  // filesys->holder = NULL
+  // sema_init(&filesys->semaphore, 1);
+  //   sema->value = 1;
+  //   list_init(&sema->waiters);
+  intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
+}
+
+static void
+syscall_handler (struct intr_frame *f UNUSED) 
+{
+  //printf("syscall num : %d\n", *(uint32_t *)(f->esp));
+  //printf("system call!\n");
+  
+  switch (*(uint32_t *)(f->esp))
+    {
+    case SYS_HALT: // args number : 0
+      halt(); // shutdown pintos
+      break;
+      
+    case SYS_EXIT: // args number : 1
+      check_address(f->esp+4);
+      exit(*(uint32_t *)(f->esp + 4)); // thread_current exit
+      break;
+
+    case SYS_EXEC: // args number : 1
+      check_address(f->esp+4);
+      f->eax = exec((const char *)*(uint32_t *)(f->esp+4));
+      break;
+      
+    case SYS_WAIT: //proc related
+      check_address(f->esp+4);
+      f->eax=wait(*(uint32_t *)(f->esp+4));
+      break;
+      
+    case SYS_CREATE: // file related
+      check_address(f->esp+4);
+      check_address(f->esp+8);
+      f->eax=create((const char *)*(uint32_t *)(f->esp+4),
+		    (unsigned)*(uint32_t *)(f->esp+8));
+      break;
+      
+    case SYS_REMOVE: // file related
+      check_address(f->esp+4);
+      f->eax=remove((const char *)*(uint32_t *)(f->esp+4));
+      break;
+      
+    case SYS_OPEN: // file related
+      check_address(f->esp+4);
+      f->eax =open((const char *)*(uint32_t *)(f->esp+4));
+      break;
+
+    case SYS_FILESIZE: // file related
+      check_address(f->esp+4);
+      f->eax = filesize((int)*(uint32_t *)(f->esp+4));
+      break;
+      
+    case SYS_READ:     // file related
+      check_address(f->esp+4);
+      check_address(f->esp+8);
+      check_address(f->esp+12);
+      f->eax = read((int)*(uint32_t *)(f->esp+4),
+		    (void *)*(uint32_t *)(f->esp+8),
+		    (unsigned)*(uint32_t *)(f->esp+12));
+      break;
+      
+    case SYS_WRITE:    // file relateda
+      check_address(f->esp+4);
+      check_address(f->esp+8);
+      check_address(f->esp+12);
+      f->eax = write((int)*(uint32_t *)(f->esp+4),
+		     (void *)*(uint32_t *)(f->esp+8),
+		     (unsigned)*(uint32_t *)(f->esp+12));
+      break;
+      
+    case SYS_SEEK:     // file related
+      check_address(f->esp+4);
+      check_address(f->esp+8);
+      seek((int)*(uint32_t *)f->esp+4,
+	   (unsigned)*(uint32_t *)(f->esp+8));
+      break;
+      
+    case SYS_TELL:     // file related
+      check_address(f->esp+4);
+      tell((int)*(uint32_t *)(f->esp+4));
+      break;
+      
+    case SYS_CLOSE:    // file related
+      check_address(f->esp+4);
+      //printf("system call handler say : %d\n",(int)*(uint32_t *)(f->esp+4));
+      close((int)*(uint32_t *)(f->esp+4));
+      break;
+      
+    case SYS_SIGACTION:
+      check_address(f->esp+4);
+      check_address(f->esp+8);
+      check_address(f->esp+12);
+      sigaction((int)*(uint32_t *)(f->esp+4),
+		(int)*(uint32_t *)(f->esp+8),
+		(void *)*(uint32_t *)(f->esp+12));
+      break;
+      
+    case SYS_SENDSIG:
+      check_address(f->esp+4);
+      check_address(f->esp+8);
+      sendsig((int)*(uint32_t *)(f->esp+4),
+	      (int)*(uint32_t *)(f->esp+8));
+      break;
+      
+    case SYS_YIELD:
+      sched_yield();
+      break;
+      
+    default:
+      thread_exit();
+    }
+  //thread_exit();
+}
+
+
+
+
+
+// 1. Shutdown pintos
+/*Completed*/
+void
+halt(void)
+{
+  shutdown_power_off();
+}
+
+
+// 2.process terminate system call
+/*Semi Completed*/
+void
+exit(int status)
+{
+  struct thread* cur = thread_current();
+  printf("%s: exit(%d)\n", cur->name, status);
+  /* Save exit status at process descriptor */
+  cur->exit_status = status;
+  
+  thread_exit();
+}
+
+// 3. process_execute
+// 3.Create child process and execute program corresponds to cmd_line on it 
+//   Combine fork() and exec() in unix
+
+pid_t
+exec(const char *cmd_line)
+{
+  return process_execute(cmd_line);
+}
+
+int
+wait(pid_t pid)
+{
+  return process_wait(pid);
+}
+
+/*Completed*/
+bool
+create(const char *file, unsigned initial_size)
+{
+  if(file==NULL)
+    exit(-1);
+  return filesys_create(file, initial_size);
+}
+
+/*Completed*/
+bool
+remove(const char *file)
+{
+  if(file==NULL)
+    exit(-1);
+  return filesys_remove(file);
+}
+
+/*Completed*/
+int
+filesize(int fd)
+{
+  struct file* f = thread_current()->fd[fd];
+  if(f==NULL)
+    exit(-1);
+  else
+    return file_length(f);
+  // return inode_length(file->node)
+}
+
+/*Not completed*/
+int
+read(int fd, void* buffer, unsigned size){
+  int i;
+  int ret=-1;
+  check_address(buffer);
+  
+  //lock_acquire(&filesys_lock);
+  if (fd==0){ //stdin
+    for(i =0;i<(int)size;i++){
+      if(((char *)buffer)[i]=='\0'){
+	break;
+      }
+    }
+    ret = i;
+  }
+  else if(fd>2){
+    struct file *f = thread_current()->fd[fd];
+    
+    if(f==NULL){
+      exit(-1);
+    }
+    else{
+      off_t read_bytes = file_read(f,buffer,size);
+      //printf("readbytes:%d\n",read_bytes);
+      ret = read_bytes;
+    }
+  }
+  //printf("ret is %d\n",ret);
+  //lock_release(&filesys_lock);
+  return ret;
+}
+
+
+/*Not completed*/
+int
+write(int fd, const void* buffer, unsigned size)
+{
+  check_address(buffer);
+  //lock_acquire(&filesys_lock);
+  int ret=0;
+  if(fd==1){ //stdout
+    putbuf(buffer,size);
+    ret=size; 
+  }
+
+  else if(fd>2){
+    struct file *f = thread_current()->fd[fd];
+    if(f== NULL){
+      //lock_release(&filesys_lock);
+       exit(-1);
+    }
+    if(thread_current()->fd[fd]->deny_write){
+      file_deny_write(thread_current()->fd[fd]);
+    }
+    off_t write_bytes = file_write(f, buffer, size);
+    ret=write_bytes;
+  }
+  //lock_release(&filesys_lock);
+  return ret;
+}		     
+		     
+/*Not completed*/
+int
+open(const char *file)
+{
+  check_address(file);
+  int ret = -1;
+  
+  //lock_acquire(&filesys_lock);
+  struct file *f = filesys_open(file);
+  //printf("open-missing %d\n",f);
+  /* open error */
+  
+  if (f == NULL)
+    return -1;
+  
+  /* success */
+  else{
+    int i;
+    for(i=3;i<64;i++){
+      /*detect where is NULL*/
+      if(thread_current()->fd[i]==NULL){
+
+	// same thread_name with open(file)?
+	// file_deny_write true
+	if(!strcmp(thread_current()->name, file)){
+	  file_deny_write(f);
+	}
+	
+	thread_current()->fd[i] = f;
+        ret = i; //open
+	break;
+      }
+    }
+  }
+  //lock_release(&filesys_lock);
+  return ret;
+}
+
+/*Not Completed*/
+void
+close(int fd)
+{
+  struct file *f = thread_current()->fd[fd];
+  if(f == NULL)
+    exit(-1);
+  file_allow_write(f);
+  // TWICE CLOSE
+  // Wonder why NULL is first????
+  f = NULL;
+  file_close(f);
+  
+}
+
+/*Completed*/
+void
+seek(int fd, unsigned position)
+{
+  struct file *f = thread_current()->fd[fd];
+  if(f==NULL) // not exist
+    exit(-1);
+  file_seek(f, position);
+  // f->pos = position,
+  // set the current position in FILE to postion bytes from start
+}
+
+/*Completed*/
+unsigned
+tell(int fd)
+{
+  struct file *f = thread_current()->fd[fd];
+  if(f == NULL) // not exist
+    exit(-1);
+  else
+    return file_tell(f);
+  // return f->pos
+  // current position in FILE as a byte offset from start
+}
+
+void sigaction(int signum, void(*handler)(void))
+{
+  return;
+}
+
+/* Signal part */
+void sendsig(pid_t pid, int signum)
+{
+  struct list_elem;
+  if(pid==thread_current()->tid){
+    printf("Signum: %d, Action: %p\n",signum, pid);
+  }
+}
+
+void check_address(void *addr)
+{
+  // is_user_vaddr { return vaddr < PHYS_BASE }
+  if(addr == NULL || !is_user_vaddr(addr) ){
+    exit(-1);
+  }   
+}
+
+void sched_yield()
+{
+  thread_yield();
+}
