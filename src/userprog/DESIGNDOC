@@ -21,9 +21,9 @@ Dongju Kim <dongju0531hb@kaist.ac.kr>
 parse_option() 에서 인자들을 parse 하지 못한다는 error가 뜹니다.
 찾아보니 다음과 같은 문제인데, 아래 방법 대로
 https://stackoverflow.com/questions/20822969/pintos-programming-project-2
-
 loader.bin, kernel.bin 위치도 수정했는데 계속 오류가 발생합니다.ㅠㅠ.
 
+위 오류 때문에 DESIGN DOC파일이 조금 늦게 업로드 되었습니다ㅠㅠ
 
 >> Please cite any offline or online sources you consulted while
 >> preparing your submission, other than the Pintos documentation, course
@@ -87,8 +87,8 @@ Pintos에서 커널은 명령을 실행 파일로 분리합니다.
 
 장점1. Kernel을 실행하고 Kernel의 작업량을 줄여서 시간 효율성을 높일 수 있다.
 
-장점2. Kenrel 공간보다 User공간에서 argument를 나누는 것이 좀 더 안전하다. Kernel 공간에서 argument를 분리하다가 다른 space에 침범을 할 수도 있다.
-그래서 UNIX는 이와 같이 보안을 향상시킬 수 있다.
+장점2. Kenrel 공간보다 User공간에서 argument를 나누는 것이 좀 더 안전하다. 
+Kernel 공간에서 argument를 분리하다가 다른 space에 침범을 할 수도 있다. 그래서 UNIX는 이와 같이 보안성을 높일 수 있다.
 
                  SYSTEM CALLS
                  ============
@@ -131,18 +131,33 @@ start_process()에서 load로 메모리에 프로그램을 적재할 때까지 p
 
 
     bool wait_called_exit;
+
+process_exit( )함수가 호출되었을 때 현재 process가 thread가 exit된다는 것을 남기기 위한 표식.
+이를 통해 부모 프로세스가 자식을 기다리면서 자신의 children list에서 exit된 친구가 있으면 return해서 wait을 멈추는 역할
     bool thread_exit;
 
+process_wait( )함수에서 부모 process가 대기인 상황 child process들은 thread_exit에 true가 있으면
+자신이 exit()을 호출했을 때 저장한 status를 부모 process에게 return하기 위함
 
     int exit_status;             //for exit()
+
+start_process()함수 내부의 load()함수에서 성공적으로 메모리에 프로그램을 적재함을 저장하기 위함
     int load_status;
 
    /* ++++ Project2.3 File/IO ++++ */
+
+각 프로세스의 FILE I/O를 위한 파일 디스크립터
    struct file *fd[128];     // file descriptor
+
+현재 thread가 실행하고 있는 file
    struct file *running_file;
 
+현재 thread가 open, close를 할때 다음의 어떤 file_descriptor의 fd값에 연결해야 되는지 미리 알려서
+각각 함수에서 처리하기 위함
    int next_fd; //point out next file descriptor
 
+simple-sig함수 구현을 위해 sigaction() 호출시 해당 handler함수를 저장하기 위함. 3개인 이유는
+simple-sig.c에 ONE, TWO, THREE만 신호를 보내서
 
    /* ++++ Project2.5 simple-sig ++++ */
     void *sig_handler[3];
@@ -151,6 +166,9 @@ start_process()에서 load로 메모리에 프로그램을 적재할 때까지 p
 >> Are file descriptors unique within the entire OS or just within a
 >> single process?
 
+file descriptor는 각각의 single process마다 할당이 된다. 
+현재는 file descriptor에서 fd값이 stdin(0)과 stdout(1)을 제외하면,
+file open시 저장한 next_fd 값(fd값들 중에 최솟값)을 택하여 file을 ope하고 해당 file에 fd를 할당한다.
 
 
 ---- ALGORITHMS ----
@@ -158,15 +176,48 @@ start_process()에서 load로 메모리에 프로그램을 적재할 때까지 p
 >> B3: Describe your code for reading and writing user data from the
 >> kernel.
 
+user program에서 read( ) , write( )함수를 호출한다.
+이 함수는 lib/syscall.c 함수에서 user가 넣은 argument들을
+stack pointer를 통해 kuser stack에 쌓는다.
+다 push한 후 int 0x30이 호출되고, Interrupt Vector table에서는
+0x30은 syscall_handler를 호출한다. 이 때 syscall handelr에는 open과 write에 해당하는 system call number가
+switch 문을 통해 실행되고, 방금 stack에 넣어준 변수들을 통해서 syscall.c 함수 내부에서 선언된 write(), read()함수를 다시 호출한다.
+이는 kernel에서 동작되는 거라고 보면 된다. 
+read(fd , , )함수의 경우 stdin의 경우 input_getc()를 return해주고, fd값이 다른 것일 경우 file_read함수를 이용하여 해당 fd값에서 파일을 읽는다.
+그리고 읽은 byte 수를 user program에게 다시 전달하기 위해 규칙에 따라 intr_frame의 eax register에 저장한다.
+write도 마찬가지 이다. 다만 stdout의 경우 putbuf를, fd값이 다른 것일 경우 file_write함수를 이용하여 파일을 쓴다.
+역시 쓴 byte수를 eax register에 저장.
+
+
 >> B4: Suppose a system call causes a full page (4,096 bytes) of data
 >> to be copied from user space into the kernel.  What is the least
 >> and the greatest possible number of inspections of the page table
 >> (e.g. calls to pagedir_get_page()) that might result?  What about
 >> for a system call that only copies 2 bytes of data?  Is there room
 >> for improvement in these numbers, and how much?
+full page인 4,096 byte를 하나의 page table에서 kernel로 복사한다고 가정한다면 inspection 수는 최소 한 번이다. 
+딱 2byte 데이터의 경우만 복사하는 경우, 최대 2개, 최소 한번의 page table inspection이 필요할 것이다. 
+만약 1byte씩 각각 서로 다른 page table을 복사한다면 최대 4,096번의 inspection이 필요할 것이다. 
+
+project2에서는 user program을 메모리에 적재할 때마다 주어진 바이트 수(read_bytes)에 맞게 install_page{ pagedir_get_page() } 함수를 호출하는데, 
+project3의 virtual memory를 이용하여 필요한 경우에만 page table을 inspect하면 더 효율적일 것이다.
+
 
 >> B5: Briefly describe your implementation of the "wait" system call
 >> and how it interacts with process termination.
+
+wait() 함수는 process_wait() return하여 해당 함수를 실행한다. 
+이 함수는 자식 process가 정상적으로 exit하는 경우 그 자식 process의 exit_status 값을 return 한다. 
+좀 더 자세히
+1. children 내부를 돌면서 기다리는 자식 프로세스의 tid인 child_thread id와 동일한 child_thread를 찾고 wait_called_exit를 1로 설정한다. 이는 혹여나 다시 똑같이 wait(똑같은 pid) 호출되는 것을 후에 막기위해서다. 
+2. 만약 동일한 child_thread를 찾지 못하면 -1을 return하고, 
+3. 동일한 tid를 찾았을 경우 해당 자식 process가 끝날 때 까지 기다리기 위해 exit_semaphore를 down 시킨다. 
+4. 이후에 부모(현재) thread의 child_list에서 child_elem을 제거한다. 
+
+process 종료시에는 file을 현재 running중인 file을 닫고, file descriptor를 모두 닫아주고 
+만약 자신이 부모  process인 경우 children list에서 자식 프로세스를 위해 잠시 wait해준다.
+이는 좀비 process가 되지 않기 위함 
+
 
 >> B6: Any access to user program memory at a user-specified address
 >> can fail due to a bad pointer value.  Such accesses must cause the
@@ -182,12 +233,24 @@ start_process()에서 load로 메모리에 프로그램을 적재할 때까지 p
 >> paragraphs, describe the strategy or strategies you adopted for
 >> managing these issues.  Give an example.
 
+항상 system call시 어떤 주소를 참조하는 모든 변수 및 포인터에 대해 check_address()를 호출하여 user memory의 범위 밖이면 exit(-1)을 call했다 
+user memory 안이라도 page fault인 경우 exception.c에 page_fault() 함수에서 exit(-1)을 호출한다. 
+exit(-1)은 thread_exit()을 호출하고 결국 process_exit( )를 호출한다. 이떄 해당 함수 실행 시 현재 running file을 close하고
+모든 file_descriptor의 file이 있는 경우 close()를 한다.
+
 ---- SYNCHRONIZATION ----
 
 >> B7: The "exec" system call returns -1 if loading the new executable
 >> fails, so it cannot return before the new executable has completed
 >> loading.  How does your code ensure this?  How is the load
 >> success/failure status passed back to the thread that calls "exec"?
+
+semaphore를 이용하여 init_thread()에서 value=0으로 설정하면, 공유자원을 처음부터 접근할 수 없다. 누군가 sema_up을 해야 한다.
+process_execute()에서는 sema_down을 호출하여 잠시 block이 대기하여 프로그램 메모리 적재를 기다린다.
+start_processs()에서 load가 완료되면 load_lock semaphore를 sema_up하여 load가 완료된 것을 알린다. 
+만약 load가 sucesss=false이면 tid를 TID_ERROR로 설정하고 부모 process에게 전달하고 자식 process는 exit(-1)를 call한다.
+
+
 
 >> B8: Consider parent process P with child process C.  How do you
 >> ensure proper synchronization and avoid race conditions when P
@@ -196,17 +259,35 @@ start_process()에서 load로 메모리에 프로그램을 적재할 때까지 p
 >> terminates without waiting, before C exits?  After C exits?  Are
 >> there any special cases?
 
+1. C가 존재하기 전 wait() 호출하는 경우, children에서 알맞은 자식 process를 찾지 못한 경우 -1을 return 한다.
+2. 만약 children에 C가 존재하는 경우, 이미 wait(C)를 했는데 또 wait이 되는 경우를 방지하기 위해 thread 구조체에 wait_called_exit 변수를 추가하여 처음 call 된 경우 해당 변수를 true로 설정하고 다시 이 wait_called_exit가 true인 것을 만나면 -1를 return하게 한다.
+3, 부모 process가 자식 process에 대한 wait이 끝나기 직전 children에서 지우고, palloc_free_page(child_t)를 call 하여 모든 메모리에 대해 free한다.
+4. 부모 process가 자식 process를 기다리지 않고 종료되는 경우(좀비 process 생성)를 방지하기 위해, process_exit()에서 children을 탐색하여 모든 child processor에 대해 process_wait을 해준다. 
+5. 자식 process가 부모 process를 wait()를 하기 전에 종료되는 경우, thread 구조체에 있는 멤버변수인 thread_exit이 true인 것을 체크하고 이미 exit()호출 때 미리 저장해 둔 exit_status를 return 한다.
+6. 자식 process가 존재하기 전에 부모 process가 종료된 경우 자식 process가 create될 때 현재 running thread를 parent thread를 설정하기 부모가 누구인지 모르지 못할 것이다. 
+
+
 ---- RATIONALE ----
 
 >> B9: Why did you choose to implement access to user memory from the
 >> kernel in the way that you did?
+ check_address()함수를 만들어 해당 address가 null은 아닌지, 그리고 user memory를 벗어나지는 않았는지 
+ is_user_vaddr(addr) 즉 vaddr <PHYS_BASE를 확인하였다. 또한 exception.c 파일에서는 page_fault가 일어난 경우
+ kernel에 의해 쓰여졌거나 fault_addr가 kernel를 벗어난 경우와 read/open하고 있는 page에 접근한 경우 exit(-1)해서 해당 process를 종료하도록 했다.
 
 >> B10: What advantages or disadvantages can you see to your design
 >> for file descriptors?
 
+항상 각 thread가 next_fd값 (다음번에 비어있는 file descriptor의 index 중 최솟값)을 통해서 
+open 시에 바로 해당 file을 file descriptor에 연결할 수 있다.
+
+
 >> B11: The default tid_t to pid_t mapping is the identity mapping.
 >> If you changed it, what advantages are there to your approach?
 
+identity mapping을 사용하였지만, 이는 pintos가 하나의 process에 하나의 thread를 갖기 때문이다.
+범용적인 os의 경우 하나의 process의 여러개의 thread를 가질 수 있기에 multi-thread processing에서는
+tid_t와 pid_t를 동일하게 mapping하지 않는 것이 필요하다.
 
                SURVEY QUESTIONS
                ================
@@ -223,7 +304,7 @@ too hard and too long time
 
 >> Did you find that working on a particular part of the assignment gave
 >> you greater insight into some aspect of OS design?
-Not...
+Not yet...
 
 >> Is there some particular fact or hint we should give students in
 >> future quarters to help them solve the problems?  Conversely, did you
