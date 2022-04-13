@@ -29,7 +29,11 @@ loader.bin, kernel.bin 위치도 수정했는데 계속 오류가 발생합니�
 >> preparing your submission, other than the Pintos documentation, course
 >> text, lecture notes, and course staff.
 https://jybaek.tistory.com/593
-
+https://oslab.kaist.ac.kr/wp-content/uploads/esos_files/courseware/undergraduate/PINTOS/01.pdf
+https://oslab.kaist.ac.kr/wp-content/uploads/esos_files/courseware/undergraduate/PINTOS/02.pdf
+https://oslab.kaist.ac.kr/wp-content/uploads/esos_files/courseware/undergraduate/PINTOS/03.pdf
+https://oslab.kaist.ac.kr/wp-content/uploads/esos_files/courseware/undergraduate/PINTOS/04_File_Descriptor.pdf
+https://oslab.kaist.ac.kr/wp-content/uploads/esos_files/courseware/undergraduate/PINTOS/05_Denying_Write_to_Executable.pdf
 
                ARGUMENT PASSING
                ================
@@ -39,27 +43,57 @@ https://jybaek.tistory.com/593
 >> A1: Copy here the declaration of each new or changed `struct' or
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
+argument_stack(char* argv[], int argc, void **esp) 함수를 중심으로 구현했고,
+모든 함수내 local variable을 사용하였다.
 
 ---- ALGORITHMS ----
 
 >> A2: Briefly describe how you implemented argument parsing.  How do
 >> you arrange for the elements of argv[] to be in the right order?
 >> How do you avoid overflowing the stack page?
+process_execute( )에서는  strtok_r를 한번만 하여 첫번째 token만
+start_process( )에서는  strtok_r를 전부 token화 시킨 후 char *parse[64] 배열에 각 argument를 저장하였다.
+overflow를 감지하기 위해 최대 argument를 64개 저장할 수 있게 설정 했고, 
+argu_count라는 변수로 token되는 인수의 갯수를 샌다.
+그 결과 argu_count가 64를 넘으면 argument_stack() 호출 전 exit(-1)로 처리한다.
+
+argument_stack( )함수에서는 argu_count만큼 interrupt frame에 parse들의 push된다.
+이때 esp(stack pointer regsiter)가 가르키는 주소값을 NAME과 argument의 한글자 마다 -1씩 감소한다.
+즉 argument에 오른쪽에 위치한 것들이 esp의 높은 주소에 위치한다. 점점 왼쪽에 있는 변수가 push되고 esp주소는 1씩 줄어든다.
+그 후 word-align을 위해 주소값이 4에 맞춰서 딱딱 내려올 수 있도록 주소값이 4로 나누어 떨어질때까지 0을 넣어준다.
+그 후 NAME과 argument의 주소값을  push하고 이역시도 오른쪽 변수 순으로 esp 주소가 4씩 작아지면서 들어간다.
+그 후 argv 주소 값을 넣어준 후 argc 값과 fake address 를 넣어준다. 이때 각각 값들은 esp의 주소 값이 4씩 줄어드면서 해당 위치에 들어간다.
 
 ---- RATIONALE ----
 
 >> A3: Why does Pintos implement strtok_r() but not strtok()?
-saveptr은 문자열을 strtok(3)의 내부에서 관리하던 static 변수 대신에 외부 변수를 사용하도록 변경하여 
-multi-thread에 안전하도록 변경되었습니다.
-strtok(3)은 multi-thread 프로그램에서 오류를 유발
-https://jybaek.tistory.com/593
+strtok는 strtok_r로 만들어지는 함수이다.
+stktok( )함수 내부에 static har *olds 가 있는데,
+static으로 선언되어 program의 data영역에 저장된다.
+이 뜻은 data 영역에 global vairble도 포함되서 어디서나 접근 가능한 변수이다.
+임시로 사용되는 stack 영역이 아니기 때문에 multi-thread로 접근하여 strtok()
+를 호출하게 되면 내부 값에 영향을 많이 미치게 되어 atomic하게 동작하지 않는다.
+
+반면 strtok_r의 경우는 char **save ptr이라는 변수에 token되고 남은 녀석들이 따로 저장될 수 있다.
+이는 외부에서 함수를 호출할 때 save_ptr 을 포인터 변수를 만들어야 하지만, atomic하게 각자 동작할 수 있어 안전하다.
 
 >> A4: In Pintos, the kernel separates commands into a executable name
 >> and arguments.  In Unix-like systems, the shell does this
 >> separation.  Identify at least two advantages of the Unix approach.
 
+Pintos에서 커널은 명령을 실행 파일로 분리합니다.
+>> 및 인수. UNIX와 같은 시스템에서는 쉘이 이것을합니다.
+>> 분리. UNIX 접근법의 적어도 두 가지 이점을 확인하십시오.
+
+장점1. Kernel을 실행하고 Kernel의 작업량을 줄여서 시간 효율성을 높일 수 있다.
+
+장점2. Kenrel 공간보다 User공간에서 argument를 나누는 것이 좀 더 안전하다. Kernel 공간에서 argument를 분리하다가 다른 space에 침범을 할 수도 있다.
+그래서 UNIX는 이와 같이 보안을 향상시킬 수 있다.
+
                  SYSTEM CALLS
                  ============
+
+
 
 ---- DATA STRUCTURES ----
 
@@ -67,9 +101,57 @@ https://jybaek.tistory.com/593
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+in syscall.h
+exec( ) 함수의 반환 값을 위한 목적
+  typedef int pid_t;
+
+create와 remove() 함수의 반환 값을 위한 목적
+  #define bool    _Bool
+
+read와 write 함수를 사용할 때 동시에 사용되면 안되므로, 해당 process가 lock_acquire하고 read나 write를 전부 수행하고 lock_release를 수행이 필요
+이 때 lock을 하기 위해 필요한 구조체
+  struct lock filesys_lock;
+
+in thread.h
+
+자식 프로세스가 부모 프로세스를 저장하기 위함
+  struct thread *parent;       // point to parent process
+
+부포 프로세스가 자신의 자식 프로세스들을 list로 관리하기 위함
+  struct list children;        // for children list
+
+자식 프로세스들이 부모 프로세스의 list의 원소로 관리하기 위함
+  struct list_elem child_elem; // When I'm child process
+
+
+  struct semaphore exit_sema; // for child semaphore
+
+start_process()에서 load로 메모리에 프로그램을 적재할 때까지 process_execute에서 기다리기 위함
+  struct semaphore load_sema;  // for load
+
+
+    bool wait_called_exit;
+    bool thread_exit;
+
+
+    int exit_status;             //for exit()
+    int load_status;
+
+   /* ++++ Project2.3 File/IO ++++ */
+   struct file *fd[128];     // file descriptor
+   struct file *running_file;
+
+   int next_fd; //point out next file descriptor
+
+
+   /* ++++ Project2.5 simple-sig ++++ */
+    void *sig_handler[3];
+
 >> B2: Describe how file descriptors are associated with open files.
 >> Are file descriptors unique within the entire OS or just within a
 >> single process?
+
+
 
 ---- ALGORITHMS ----
 
