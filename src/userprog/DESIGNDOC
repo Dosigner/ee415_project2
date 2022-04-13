@@ -15,6 +15,15 @@ Dongju Kim <dongju0531hb@kaist.ac.kr>
 
 >> If you have any preliminary comments on your submission, notes for the
 >> TAs, or extra credit, please give them here.
+제 컴퓨터에서는 잘 되었는데,
+
+갑자기 vm으로 옮기고 나서
+parse_option() 에서 인자들을 parse 하지 못한다는 error가 뜹니다.
+찾아보니 다음과 같은 문제인데, 아래 방법 대로
+https://stackoverflow.com/questions/20822969/pintos-programming-project-2
+
+loader.bin, kernel.bin 위치도 수정했는데 계속 오류가 발생합니다.ㅠㅠ.
+
 
 >> Please cite any offline or online sources you consulted while
 >> preparing your submission, other than the Pintos documentation, course
